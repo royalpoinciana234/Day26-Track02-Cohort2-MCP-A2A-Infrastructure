@@ -1,11 +1,33 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Chính sách data governance cho kết nối MCP và A2A — Lab Ngày 26",
   "global_limits": {
     "max_tool_calls_per_task": 50,
     "max_execution_seconds": 300,
     "cost_ceiling_usd": 10.0,
     "rate_limit_per_minute": 30
+  },
+  "agent_limits": {
+    "orchestrator": {
+      "rate_limit_per_minute": 30,
+      "max_tool_calls_per_task": 50,
+      "max_execution_seconds": 300
+    },
+    "search_agent": {
+      "rate_limit_per_minute": 20,
+      "max_tool_calls_per_task": 10,
+      "max_execution_seconds": 60
+    },
+    "database_agent": {
+      "rate_limit_per_minute": 15,
+      "max_tool_calls_per_task": 5,
+      "max_execution_seconds": 30
+    },
+    "synthesis_agent": {
+      "rate_limit_per_minute": 10,
+      "max_tool_calls_per_task": 3,
+      "max_execution_seconds": 120
+    }
   },
   "connections": {
     "mcp": {
@@ -16,7 +38,8 @@
           "search_documents": {
             "allowed": true,
             "data_classification": "internal",
-            "max_query_length": 500
+            "max_query_length": 500,
+            "blocked_keywords": ["password", "secret", "token", "api_key"]
           },
           "sql_query": {
             "allowed": true,
@@ -25,6 +48,11 @@
             "allowed_tables": ["agent_metrics"]
           },
           "summarize_text": {
+            "allowed": true,
+            "data_classification": "internal",
+            "max_input_chars": 10000
+          },
+          "count_words": {
             "allowed": true,
             "data_classification": "internal",
             "max_input_chars": 10000
@@ -40,24 +68,32 @@
       "search_agent": {
         "allowed_callers": ["orchestrator"],
         "allowed_tools": ["search_web"],
-        "blocked_actions": ["write", "delete", "send_email"]
+        "blocked_actions": ["write", "delete", "send_email"],
+        "hitl_actions": ["external_api_call"]
       },
       "database_agent": {
         "allowed_callers": ["orchestrator"],
         "allowed_tools": ["run_sql_query"],
-        "blocked_actions": ["ddl", "dml", "truncate"]
+        "blocked_actions": ["ddl", "dml", "truncate"],
+        "hitl_actions": ["bulk_export"]
       },
       "synthesis_agent": {
         "allowed_callers": ["orchestrator"],
         "allowed_tools": ["synthesize_report"],
-        "blocked_actions": ["write", "delete", "send_email"]
+        "blocked_actions": ["write", "delete", "send_email"],
+        "hitl_actions": ["publish_report", "send_notification"]
       }
     }
   },
   "hitl_required": [
     "sql_query_with_pii",
     "cost_exceeds_ceiling",
-    "a2a_dispatch_to_unregistered_agent"
+    "a2a_dispatch_to_unregistered_agent",
+    "a2a_dispatch_without_trace_id",
+    "search_blocked_keyword",
+    "publish_report",
+    "send_notification",
+    "bulk_export"
   ],
   "pii_patterns": [
     "\\b\\d{3}-\\d{2}-\\d{4}\\b",

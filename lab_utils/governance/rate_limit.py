@@ -7,16 +7,22 @@ from collections import defaultdict
 
 
 class RateLimiter:
-    def __init__(self, max_calls_per_minute: int = 30):
-        self.max_calls = max_calls_per_minute
+    def __init__(
+        self,
+        max_calls_per_minute: int = 30,
+        per_actor_limits: dict[str, int] | None = None,
+    ):
+        self.default_max = max_calls_per_minute
+        self.per_actor_limits: dict[str, int] = per_actor_limits or {}
         self._windows: dict[str, list[float]] = defaultdict(list)
 
     def check(self, actor_id: str) -> tuple[bool, str]:
         now = time.time()
+        limit = self.per_actor_limits.get(actor_id, self.default_max)
         window = self._windows[actor_id]
         window[:] = [ts for ts in window if now - ts < 60]
-        if len(window) >= self.max_calls:
-            return False, f"Vượt rate limit ({self.max_calls}/phút) cho actor '{actor_id}'"
+        if len(window) >= limit:
+            return False, f"Vượt rate limit ({limit}/phút) cho actor '{actor_id}'"
         window.append(now)
         return True, "ok"
 

@@ -27,10 +27,22 @@ class GovernanceGuard:
         self.policy = json.loads(path.read_text(encoding="utf-8"))
         self.audit = audit or AuditLogger()
         limits = self.policy.get("global_limits", {})
+        agent_limits = self.policy.get("agent_limits", {})
+        per_actor_rates = {
+            agent: int(cfg["rate_limit_per_minute"])
+            for agent, cfg in agent_limits.items()
+            if "rate_limit_per_minute" in cfg
+        }
         self.rate_limiter = RateLimiter(
             max_calls_per_minute=int(limits.get("rate_limit_per_minute", 30)),
+            per_actor_limits=per_actor_rates,
         )
         self.max_tool_calls = int(limits.get("max_tool_calls_per_task", 50))
+        self._per_agent_max_tool_calls: dict[str, int] = {
+            agent: int(cfg["max_tool_calls_per_task"])
+            for agent, cfg in agent_limits.items()
+            if "max_tool_calls_per_task" in cfg
+        }
         self.cost_ceiling = float(limits.get("cost_ceiling_usd", 10.0))
         self._task_tool_counts: dict[str, int] = {}
         self._task_costs: dict[str, float] = {}
@@ -85,6 +97,18 @@ class GovernanceGuard:
                 decision = GovernanceDecision(
                     verdict=GovernanceVerdict.DENY,
                     reason=f"Truy vấn vượt giới hạn {max_len} ký tự",
+                    actor_id=actor_id,
+                    connection_type=ConnectionType.MCP,
+                    resource=f"mcp:research-tools/{tool_name}",
+                )
+                self._log(decision, "mcp_tool_call", query, trace_id)
+                return decision
+            blocked_kw = [kw.lower() for kw in tool_policy.get("blocked_keywords", [])]
+            matched = [kw for kw in blocked_kw if kw in query.lower()]
+            if matched:
+                decision = GovernanceDecision(
+                    verdict=GovernanceVerdict.HITL_REQUIRED,
+                    reason=f"Từ khóa nhạy cảm trong truy vấn: {matched} — cần phê duyệt HITL",
                     actor_id=actor_id,
                     connection_type=ConnectionType.MCP,
                     resource=f"mcp:research-tools/{tool_name}",
@@ -210,6 +234,11 @@ class GovernanceGuard:
         """Kiểm tra tool trên A2A specialist agent (search_web, run_sql_query, ...)."""
         decision = self._check_rate_limit(actor_id, ConnectionType.A2A, tool_name)
         if decision.blocked:
+            self._log(decision, "a2a_tool_call", str(arguments), trace_id)
+            return decision
+
+        decision = self._check_task_limits(actor_id, ConnectionType.A2A, tool_name, task_id)
+        if not decision.allowed:
             self._log(decision, "a2a_tool_call", str(arguments), trace_id)
             return decision
 
@@ -403,11 +432,12 @@ class GovernanceGuard:
         resource: str,
         task_id: str,
     ) -> GovernanceDecision:
+        agent_max = self._per_agent_max_tool_calls.get(actor_id, self.max_tool_calls)
         count = self._task_tool_counts.get(task_id, 0)
-        if count >= self.max_tool_calls:
+        if count >= agent_max:
             return GovernanceDecision(
                 verdict=GovernanceVerdict.DENY,
-                reason=f"Vượt giới hạn {self.max_tool_calls} tool calls/task (chống chạy vô hạn)",
+                reason=f"Vượt giới hạn {agent_max} tool calls/task cho '{actor_id}' (chống chạy vô hạn)",
                 actor_id=actor_id,
                 connection_type=connection_type,
                 resource=resource,
